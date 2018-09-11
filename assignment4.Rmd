@@ -1,0 +1,194 @@
+---
+title: "Assignemnt4-Practical Machine Learning Course"
+author: "Guillaume Polet"
+date: "11/09/2018"
+output:
+  html_document: default
+  md_document: default
+---
+
+## Introduction
+
+### Background 
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways:
+
+* Exactly according to the specification (Class A)
+* Throwing the elbows to the front (Class B) - mistake
+* Lifting the dumbbell only halfway (Class C) - mistake
+* Lowering the dumbbell only halfway (Class D) - mistake
+* Throwing the hips to the front (Class E) - mistake
+
+Accelerometers were located on:
+
+1. belt
+2. forearm
+3. arm
+
+### Goal
+
+Create a report describing:
+
+* how you built your model,
+* how you used cross validation
+* what you think the expected out of sample error is
+* why you made the choices you did
+
+## Getting and Loading the Data
+
+## Preparing The Data
+
+### Loading the packages and the data
+
+```{r loading, message=FALSE,warning=FALSE}
+if(require(xgboost)==FALSE)(install.packages("xgboost")); library(xgboost)
+if(require(knitr)==FALSE)(install.packages("knitr")); library(knitr)
+if(require(randomForest)==FALSE)(install.packages("randomForest")); library(randomForest)
+if(require(caret)==FALSE)(install.packages("caret")); library(caret)
+if(require(dplyr)==FALSE)(install.packages("dplyr")); library(dplyr)
+
+set.seed(12345)
+
+trainingUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testingUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+training <- read.csv(url(trainingUrl), na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv(url(testingUrl), na.strings=c("NA","#DIV/0!",""))
+
+print(dim(training))
+```
+
+As we can see there are 160 features in the dataset
+
+### Cleaning the data
+
+```{r cleaning,}
+#Remove factors with less than 2 levels;
+training<-training[, sapply(training, function(col) length(unique(col))) > 1]
+
+#remove variales with more than 0.7 percent of missing
+
+training<-training[, -which(colMeans(is.na(training)) > 0.85)]
+
+#Let's also remove the variablew that are not predictors
+training<-training[,-(1:7)]
+
+# Remove variables with a near zero variance
+nzv <- nearZeroVar(training, saveMetrics=TRUE)
+training <- training[,nzv$nzv==FALSE]
+
+# Removing highly correlated variables
+#High Correlation
+nums <- sapply(training, is.numeric)
+cornums<-training[complete.cases(training),nums]
+corr<-cor(cornums)
+# highCorr <- sum(abs(corr[upper.tri(corr)]) > .96)
+
+hc<-findCorrelation(corr, cutoff = 0.98,names=TRUE, verbose = TRUE)
+hc
+
+#Remove highly correlated variables
+training<-training[,!(names(training) %in% hc)]
+
+print(dim(training))
+```
+
+The cleaning of the data results in having 51 variables
+
+## Building the Model
+
+### RandomForest
+
+To build the model we will use the RandomForest as it is one of the most powerful classifier.
+
+#### Partitioning the data in two sets and taking care of the target variable
+
+First we'll put the target variable aside in order to not include in the 
+```{r partition}
+# Preparing the target variable for the model
+classe <- training$classe
+df <- select(training, -classe)
+
+#Partition the data set into the training and test set
+trainIndex <- createDataPartition(classe, p=.8, list = FALSE)
+dfTrain <- df[ trainIndex, ]
+dfTest <- df[-trainIndex, ]
+```
+
+#### Model building with cross validation 
+
+The crossvalidation is done with the function ** trainControl ** and we will use a k=5 allow parallelisation since the size of the data set is quite big.
+
+```{r building}
+#Setting the control parameters (cross validation)
+trControl <- trainControl(method = "cv",
+                          number = 5,
+                          verboseIter = TRUE,
+                          allowParallel = TRUE,
+                          summaryFunction = multiClassSummary)
+
+#Train the model
+if (!file.exists("randomForestAssignment4.RData")) {
+  rf<- caret::train(x = dfTrain,
+                       y = classe[trainIndex],
+                       method = 'rf',
+                       metric = "Accuracy",
+                       trControl = trControl,
+                      preProcess=c("center", "scale"))
+  save(rf, file = "randomForestAssignment4.RData")
+} else {
+    # Use cached model  
+    load(file = "randomForestAssignment4.RData")
+}
+
+
+# model Summary
+rf
+```
+
+As we can see, on the training set the accuracy is really high since it's more than 99%!
+```{r plot}
+plot(rf)
+```
+
+As we cann see the optimum number of preidcotrs in terms of accuracy is 28
+
+```{r varImp}
+rfImp <- varImp(rf, scale = FALSE)
+plot(rfImp)
+```
+Here are diplsayed the 20 most important variables!
+
+#### Prediction and evaluation on the test set
+
+```{r prediction}
+  predTest<- predict(rf,dfTest)
+  cm<-confusionMatrix(predTest,classe[-trainIndex])
+  print(cm)
+```
+As we can see the accuracy is quite stable hence our model does still predict well on new data! It doesn't suffer from overfitting.
+
+#### Final Model
+
+```{r finalModel}
+rf$finalModel
+```
+
+Important take away from the final model chosen:
+
+* The out-of-sample error of 0.0008 or 0.08%.
+* Accuracy is very high, at 0.9992!
+* the optiam mtry or number of predictors selected at each split is 28
+* number of trees: 500
+
+### Validation with the quiz
+
+#### Recreating the same features for validation
+```{r validation}
+testing<-testing[,(names(testing) %in% names(training))]
+```
+
+#### Predicting
+
+```{r validPrediction}
+print(predict(rf, newdata=testing))
+```
